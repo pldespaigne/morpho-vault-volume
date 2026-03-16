@@ -27,3 +27,17 @@ export function formatUsd(value: number, { signed = false } = {}): string {
     ? usdCompactSignedFormat.format(value)
     : usdCompactFormat.format(value);
 }
+
+export function formatDate(iso: string, period: "7d" | "30d" | "12m"): string {
+  const date = new Date(iso);
+  if (period === "12m") {
+    return date.toLocaleDateString("en-US", {
+      month: "short",
+      year: "numeric",
+    });
+  }
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+}

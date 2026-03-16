@@ -227,6 +227,14 @@ export const fetchVaultTransactions = inngest.createFunction(
       });
     });
 
+    // ── Step 6: Invalidate leaderboard cache (only if we wrote new data) ─
+    if (upsertCount > 0) {
+      await step.run("invalidate-cache", async () => {
+        const { revalidateTag } = await import("next/cache");
+        revalidateTag("leaderboard");
+      });
+    }
+
     logger.info(
       `Synced ${txCount} txs → ${upsertCount} daily buckets`,
     );
