@@ -1,4 +1,4 @@
-import { graphql } from "./generated/gql.js";
+import { graphql } from "@/lib/graphql/generated/gql";
 
 export const VAULT_TRANSACTIONS = graphql(`
   query VaultTransactions($where: TransactionFilters, $first: Int, $skip: Int, $orderBy: TransactionsOrderBy, $orderDirection: OrderDirection) {

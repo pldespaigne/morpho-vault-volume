@@ -2,11 +2,10 @@ import type { CodegenConfig } from "@graphql-codegen/cli";
 
 const config: CodegenConfig = {
   schema: "https://api.morpho.org/graphql",
-  documents: ["src/**/*.ts", "index.ts"],
+  documents: ["lib/**/*.ts"],
   ignoreNoDocuments: true,
-  emitLegacyCommonJSImports: false,
   generates: {
-    "./src/graphql/generated/": {
+    "./lib/graphql/generated/": {
       preset: "client",
       config: {
         documentMode: "string",
