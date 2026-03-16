@@ -1,15 +1,17 @@
 import { graphql } from "@/lib/graphql/generated/gql";
 
-export const VAULT_BY_ADDRESS = graphql(`
-  query VaultByAddress($address: String!, $chainId: Int) {
-    vaultByAddress(address: $address, chainId: $chainId) {
-      address
-      name
-      metadata {
-        image
-      }
-      chain {
-        id
+export const VAULTS_BY_ADDRESSES = graphql(`
+  query VaultsByAddresses($where: VaultFilters, $first: Int) {
+    vaults(where: $where, first: $first) {
+      items {
+        address
+        name
+        metadata {
+          image
+        }
+        chain {
+          id
+        }
       }
     }
   }

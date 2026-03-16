@@ -1,7 +1,10 @@
 import { inngest } from "@/inngest/client";
 import { client } from "@/lib/graphql/client";
 import { fetchAllPages } from "@/lib/graphql/paginate";
-import { VAULT_BY_ADDRESS, VAULT_TRANSACTIONS } from "@/lib/graphql/queries";
+import {
+  VAULTS_BY_ADDRESSES,
+  VAULT_TRANSACTIONS,
+} from "@/lib/graphql/queries";
 import {
   OrderDirection,
   TransactionType,
@@ -9,7 +12,7 @@ import {
 } from "@/lib/graphql/generated/graphql";
 import { prisma } from "@/lib/prisma";
 
-/** 2-month batch window (in seconds) to cap step output size. */
+/** Batch window (in seconds). */
 const BATCH_SIZE_SECONDS = 60 * 60 * 24 * 60; // ~60 days
 
 /**
@@ -43,7 +46,7 @@ export const fetchVaultTransactions = inngest.createFunction(
     // Cap the query window so we only ever process complete UTC days.
     // – Prevents the cursor from jumping into the future when no txs exist.
     // – Ensures every day in the window is fully captured, so the idempotent
-    //   absolute-set upsert in Step 5 is always correct.
+    //   absolute-set upsert in Step 4 is always correct.
     const startOfTodayUtc = Math.floor(
       Date.UTC(
         new Date().getUTCFullYear(),
@@ -56,45 +59,35 @@ export const fetchVaultTransactions = inngest.createFunction(
       startOfTodayUtc - 1,
     );
 
-    // ── Step 2: Fetch transactions in (lastTimestamp, endTimestamp] ──────
-    const items = await step.run("fetch-transactions", async () => {
-      return fetchAllPages(
-        client,
-        VAULT_TRANSACTIONS,
-        {
-          where: {
-            chainId_in: [1],
-            type_in: [
-              TransactionType.MetaMorphoDeposit,
-              TransactionType.MetaMorphoWithdraw,
-            ],
-            timestamp_gte: lastTimestamp + 1,
-            timestamp_lte: endTimestamp,
-          },
-          orderBy: TransactionsOrderBy.Timestamp,
-          orderDirection: OrderDirection.Asc,
-        },
-        (r) => r.transactions,
-      );
-    });
-
-    // Short-circuit: nothing to process
-    if (items.length === 0) {
-      await step.run("advance-sync-cursor", async () => {
-        await prisma.syncCursor.upsert({
-          where: { id: "vault-transactions" },
-          create: { id: "vault-transactions", timestamp: endTimestamp },
-          update: { timestamp: endTimestamp },
-        });
-      });
-      logger.info("No new transactions found — cursor advanced.");
-      return { txCount: 0, upsertCount: 0 };
-    }
-
-    // ── Step 3: Aggregate transactions by (vaultAddress, UTC day) ───────
-    const { dailyBuckets, vaultAddresses } = await step.run(
-      "aggregate-by-day",
+    // ── Step 2: Fetch transactions and aggregate by (vaultAddress, UTC day)
+    // Merged into a single step so the large raw transaction list is never
+    // serialised as step output, avoiding the Inngest payload size limit.
+    const { txCount, dailyBuckets, vaultAddresses } = await step.run(
+      "fetch-and-aggregate",
       async () => {
+        const items = await fetchAllPages(
+          client,
+          VAULT_TRANSACTIONS,
+          {
+            where: {
+              chainId_in: [1],
+              type_in: [
+                TransactionType.MetaMorphoDeposit,
+                TransactionType.MetaMorphoWithdraw,
+              ],
+              timestamp_gte: lastTimestamp + 1,
+              timestamp_lte: endTimestamp,
+            },
+            orderBy: TransactionsOrderBy.Timestamp,
+            orderDirection: OrderDirection.Asc,
+          },
+          (r) => r.transactions,
+        );
+
+        if (items.length === 0) {
+          return { txCount: 0, dailyBuckets: [] as { vaultAddress: string; date: string; netFlow: number }[], vaultAddresses: [] as string[] };
+        }
+
         const vaultAddressSet = new Set<string>();
         const dailyMap = new Map<
           string,
@@ -127,7 +120,6 @@ export const fetchVaultTransactions = inngest.createFunction(
           if (existing) {
             existing.netFlow += netFlow;
           } else {
-            // Serialize date as ISO string for JSON-safe step output
             dailyMap.set(key, {
               vaultAddress,
               date: utcDay.toISOString(),
@@ -137,24 +129,50 @@ export const fetchVaultTransactions = inngest.createFunction(
         }
 
         return {
+          txCount: items.length,
           dailyBuckets: Array.from(dailyMap.values()),
           vaultAddresses: Array.from(vaultAddressSet),
         };
       },
     );
 
-    // ── Step 4: Ensure every vault exists in DB (idempotent upsert) ─────
+    // Short-circuit: nothing to process
+    if (txCount === 0) {
+      await step.run("advance-sync-cursor", async () => {
+        await prisma.syncCursor.upsert({
+          where: { id: "vault-transactions" },
+          create: { id: "vault-transactions", timestamp: endTimestamp },
+          update: { timestamp: endTimestamp },
+        });
+      });
+      logger.info("No new transactions found — cursor advanced.");
+      return { txCount: 0, upsertCount: 0 };
+    }
+
+    // ── Step 3: Ensure every vault exists in DB (idempotent upsert) ─────
     const vaultIdByAddress = await step.run(
       "ensure-vaults-exist",
       async () => {
+        // Chunk addresses (max 100 per request, API limit)
+        const CHUNK_SIZE = 100;
+        const vaultDataByAddress = new Map<string, { address: string; name: string; chain: { id: number }; metadata?: { image?: string | null } | null }>();
+
+        for (let i = 0; i < vaultAddresses.length; i += CHUNK_SIZE) {
+          const chunk = vaultAddresses.slice(i, i + CHUNK_SIZE);
+          const result = await client.request(VAULTS_BY_ADDRESSES, {
+            where: { address_in: chunk, chainId_in: [1] },
+            first: CHUNK_SIZE,
+          });
+          for (const v of result.vaults.items ?? []) {
+            vaultDataByAddress.set(v.address as string, v);
+          }
+        }
+
         const mapping: Record<string, string> = {};
 
         for (const address of vaultAddresses) {
-          const gqlResult = await client.request(VAULT_BY_ADDRESS, {
-            address,
-            chainId: 1,
-          });
-          const vaultData = gqlResult.vaultByAddress;
+          const vaultData = vaultDataByAddress.get(address);
+          if (!vaultData) continue;
 
           const vault = await prisma.vault.upsert({
             where: { address },
@@ -178,31 +196,29 @@ export const fetchVaultTransactions = inngest.createFunction(
       },
     );
 
-    // ── Step 5: Upsert aggregated daily net flows ───────────────────────
+    // ── Step 4: Upsert aggregated daily net flows ───────────────────────
     const { upsertCount } = await step.run(
       "upsert-daily-net-flows",
       async () => {
-        let count = 0;
-
-        for (const { vaultAddress, date, netFlow } of dailyBuckets) {
-          const vaultId = vaultIdByAddress[vaultAddress];
-          if (!vaultId) continue;
-
-          const parsedDate = new Date(date);
-
-          await prisma.dailyNetFlow.upsert({
-            where: { vaultId_date: { vaultId, date: parsedDate } },
-            create: { vaultId, date: parsedDate, netFlow },
-            update: { netFlow },
+        const ops = dailyBuckets
+          .filter(({ vaultAddress }) => !!vaultIdByAddress[vaultAddress])
+          .map(({ vaultAddress, date, netFlow }) => {
+            const vaultId = vaultIdByAddress[vaultAddress]!;
+            const parsedDate = new Date(date);
+            return prisma.dailyNetFlow.upsert({
+              where: { vaultId_date: { vaultId, date: parsedDate } },
+              create: { vaultId, date: parsedDate, netFlow },
+              update: { netFlow },
+            });
           });
-          count++;
-        }
 
-        return { upsertCount: count };
+        await prisma.$transaction(ops);
+
+        return { upsertCount: ops.length };
       },
     );
 
-    // ── Step 6: Update sync cursor ──────────────────────────────────────
+    // ── Step 5: Update sync cursor ──────────────────────────────────────
     await step.run("update-sync-cursor", async () => {
       await prisma.syncCursor.upsert({
         where: { id: "vault-transactions" },
@@ -212,9 +228,9 @@ export const fetchVaultTransactions = inngest.createFunction(
     });
 
     logger.info(
-      `Synced ${items.length} txs → ${upsertCount} daily buckets`,
+      `Synced ${txCount} txs → ${upsertCount} daily buckets`,
     );
 
-    return { txCount: items.length, upsertCount };
+    return { txCount, upsertCount };
   },
 );

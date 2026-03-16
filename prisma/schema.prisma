@@ -43,6 +43,7 @@ model MonthlyNetFlow {
 
   vault     Vault    @relation(fields: [vaultId], references: [id])
 
+  @@unique([vaultId, date])
   @@index([vaultId, date(sort: Desc)])
 }
 
