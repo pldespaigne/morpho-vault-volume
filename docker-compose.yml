@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: morpho
+      POSTGRES_PASSWORD: morpho
+      POSTGRES_DB: morpho_vault_volume
+    volumes:
+      - morpho-pg-data:/var/lib/postgresql/data
+
+volumes:
+  morpho-pg-data:

@@ -1,0 +1,52 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Vault {
+  id       String   @id @default(uuid())
+  address String   @unique
+  chainId  Int
+  name     String
+  logo     String
+
+  dailyNetFlows DailyNetFlow[]
+  monthlyNetFlows MonthlyNetFlow[]
+}
+
+model DailyNetFlow {
+  id        String   @id @default(uuid())
+  vaultId   String
+  date      DateTime
+  netFlow   Float
+
+  vault     Vault    @relation(fields: [vaultId], references: [id])
+
+  @@unique([vaultId, date])
+  @@index([vaultId, date(sort: Desc)])
+}
+
+model MonthlyNetFlow {
+  id        String   @id @default(uuid())
+  vaultId   String
+  date      DateTime
+  netFlow   Float
+
+  vault     Vault    @relation(fields: [vaultId], references: [id])
+
+  @@index([vaultId, date(sort: Desc)])
+}
+
+model SyncCursor {
+  id        String @id @default("vault-transactions")
+  timestamp Int
+}

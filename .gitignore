@@ -31,3 +31,5 @@ lib/graphql/generated/
 # TypeScript
 *.tsbuildinfo
 next-env.d.ts
+
+/generated/prisma
