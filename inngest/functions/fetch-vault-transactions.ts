@@ -168,28 +168,31 @@ export const fetchVaultTransactions = inngest.createFunction(
           }
         }
 
-        const mapping: Record<string, string> = {};
-
-        for (const address of vaultAddresses) {
-          const vaultData = vaultDataByAddress.get(address);
-          if (!vaultData) continue;
-
-          const vault = await prisma.vault.upsert({
-            where: { address },
-            create: {
-              address,
-              chainId: vaultData.chain.id,
-              name: vaultData.name,
-              logo: vaultData.metadata?.image ?? "",
-            },
-            update: {
-              chainId: vaultData.chain.id,
-              name: vaultData.name,
-              logo: vaultData.metadata?.image ?? "",
-            },
+        const upserts = vaultAddresses
+          .filter((address) => vaultDataByAddress.has(address))
+          .map((address) => {
+            const vaultData = vaultDataByAddress.get(address)!;
+            return prisma.vault.upsert({
+              where: { address },
+              create: {
+                address,
+                chainId: vaultData.chain.id,
+                name: vaultData.name,
+                logo: vaultData.metadata?.image ?? "",
+              },
+              update: {
+                chainId: vaultData.chain.id,
+                name: vaultData.name,
+                logo: vaultData.metadata?.image ?? "",
+              },
+            });
           });
 
-          mapping[address] = vault.id;
+        const vaults = await prisma.$transaction(upserts);
+
+        const mapping: Record<string, string> = {};
+        for (const vault of vaults) {
+          mapping[vault.address] = vault.id;
         }
 
         return mapping;
