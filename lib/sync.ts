@@ -38,12 +38,79 @@ export type DailyBucket = {
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-function chunk<T>(arr: T[], size: number): T[][] {
+/** @internal Exported for testing. */
+export function chunk<T>(arr: T[], size: number): T[][] {
   const result: T[][] = [];
   for (let i = 0; i < arr.length; i += size) {
     result.push(arr.slice(i, i + size));
   }
   return result;
+}
+
+// ── Pure aggregation ────────────────────────────────────────────────────
+
+/** Shape of a single raw transaction item from the Morpho API. */
+export interface RawTransaction {
+  type: string;
+  timestamp: number;
+  data:
+    | { vault: { address: string }; assetsUsd?: number | null }
+    | Record<string, unknown>;
+}
+
+/**
+ * Pure function: aggregate raw transaction items into daily net-flow buckets.
+ * Deposits (MetaMorphoDeposit) are positive, withdrawals are negative.
+ *
+ * @internal Extracted for testing.
+ */
+export function aggregateTransactionsToDailyBuckets(
+  items: RawTransaction[],
+): {
+  dailyBuckets: DailyBucket[];
+  vaultAddresses: string[];
+} {
+  const vaultAddressSet = new Set<string>();
+  const dailyMap = new Map<string, DailyBucket>();
+
+  for (const tx of items) {
+    if (!("vault" in tx.data)) continue;
+
+    const vaultAddress = (tx.data as { vault: { address: string }; assetsUsd?: number | null }).vault.address;
+    vaultAddressSet.add(vaultAddress);
+
+    const assetsUsd = (tx.data as { assetsUsd?: number | null }).assetsUsd ?? 0;
+    const netFlow =
+      tx.type === TransactionType.MetaMorphoDeposit
+        ? assetsUsd
+        : -assetsUsd;
+
+    const txDate = new Date(tx.timestamp * 1000);
+    const utcDay = new Date(
+      Date.UTC(
+        txDate.getUTCFullYear(),
+        txDate.getUTCMonth(),
+        txDate.getUTCDate(),
+      ),
+    );
+    const key = `${vaultAddress}|${utcDay.toISOString()}`;
+
+    const existing = dailyMap.get(key);
+    if (existing) {
+      existing.netFlow += netFlow;
+    } else {
+      dailyMap.set(key, {
+        vaultAddress,
+        date: utcDay.toISOString(),
+        netFlow,
+      });
+    }
+  }
+
+  return {
+    dailyBuckets: Array.from(dailyMap.values()),
+    vaultAddresses: Array.from(vaultAddressSet),
+  };
 }
 
 // ── Shared sync functions ───────────────────────────────────────────────
@@ -86,47 +153,13 @@ export async function fetchAndAggregateDailyBuckets(
     return { txCount: 0, dailyBuckets: [], vaultAddresses: [] };
   }
 
-  const vaultAddressSet = new Set<string>();
-  const dailyMap = new Map<string, DailyBucket>();
-
-  for (const tx of items) {
-    if (!("vault" in tx.data)) continue;
-
-    const vaultAddress = tx.data.vault.address;
-    vaultAddressSet.add(vaultAddress);
-
-    const assetsUsd = tx.data.assetsUsd ?? 0;
-    const netFlow =
-      tx.type === TransactionType.MetaMorphoDeposit
-        ? assetsUsd
-        : -assetsUsd;
-
-    const txDate = new Date(tx.timestamp * 1000);
-    const utcDay = new Date(
-      Date.UTC(
-        txDate.getUTCFullYear(),
-        txDate.getUTCMonth(),
-        txDate.getUTCDate(),
-      ),
-    );
-    const key = `${vaultAddress}|${utcDay.toISOString()}`;
-
-    const existing = dailyMap.get(key);
-    if (existing) {
-      existing.netFlow += netFlow;
-    } else {
-      dailyMap.set(key, {
-        vaultAddress,
-        date: utcDay.toISOString(),
-        netFlow,
-      });
-    }
-  }
+  const { dailyBuckets, vaultAddresses } =
+    aggregateTransactionsToDailyBuckets(items);
 
   return {
     txCount: items.length,
-    dailyBuckets: Array.from(dailyMap.values()),
-    vaultAddresses: Array.from(vaultAddressSet),
+    dailyBuckets,
+    vaultAddresses,
   };
 }
 

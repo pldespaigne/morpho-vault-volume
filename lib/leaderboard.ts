@@ -36,7 +36,8 @@ export type LeaderboardResponse = {
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-function getPeriodMs(period: Period): number {
+/** @internal Exported for testing. */
+export function getPeriodMs(period: Period): number {
   switch (period) {
     case "7d":
       return 7 * 24 * 60 * 60 * 1000;
@@ -47,11 +48,12 @@ function getPeriodMs(period: Period): number {
   }
 }
 
-function getDateRange(
+/** @internal Exported for testing. */
+export function getDateRange(
   period: Period,
   offset: 0 | 1,
+  now: Date = new Date(),
 ): { gte: Date; lt: Date } {
-  const now = new Date();
   const ms = getPeriodMs(period);
   const lt = new Date(now.getTime() - offset * ms);
   const gte = new Date(lt.getTime() - ms);
