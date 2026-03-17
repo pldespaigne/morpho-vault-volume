@@ -4,6 +4,8 @@ A Next.js app that tracks real capital movement (deposits − withdrawals) acros
 
 See [BusinessCase.md](BusinessCase.md) for the full rationale.
 
+<img width="974" height="641" alt="image" src="https://github.com/user-attachments/assets/de178a03-9f9e-47fb-a353-1e2be327a208" />
+
 ## Prerequisites
 
 | Requirement | Detail |
