@@ -1,8 +1,6 @@
 import { inngest } from "@/inngest/client";
 import { prisma } from "@/lib/prisma";
-
-/** Fixed 30-day window size (in milliseconds). */
-const WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+import { aggregateMonthlyWindow, MONTHLY_WINDOW_MS } from "@/lib/sync";
 
 /** Maximum number of 30-day windows to process per invocation. */
 const MAX_WINDOWS_PER_RUN = 6;
@@ -59,7 +57,7 @@ export const aggregateMonthlyNetFlows = inngest.createFunction(
       let windowStart = new Date(cursorIso).getTime();
 
       for (let i = 0; i < MAX_WINDOWS_PER_RUN; i++) {
-        const windowEnd = windowStart + WINDOW_MS;
+        const windowEnd = windowStart + MONTHLY_WINDOW_MS;
 
         // Only process windows whose end date is ≤ start-of-today.
         if (windowEnd > startOfTodayUtc) break;
@@ -87,36 +85,11 @@ export const aggregateMonthlyNetFlows = inngest.createFunction(
         let count = 0;
 
         for (const { start, end } of windows) {
-          const windowStart = new Date(start);
-          const windowEnd = new Date(end);
-
-          // Group daily rows by vaultId within this window.
-          const aggregated = await prisma.dailyNetFlow.groupBy({
-            by: ["vaultId"],
-            where: {
-              date: { gte: windowStart, lt: windowEnd },
-            },
-            _sum: { netFlow: true },
-          });
-
-          await prisma.$transaction(
-            aggregated.map((row) =>
-              prisma.monthlyNetFlow.upsert({
-                where: {
-                  vaultId_date: { vaultId: row.vaultId, date: windowStart },
-                },
-                create: {
-                  vaultId: row.vaultId,
-                  date: windowStart,
-                  netFlow: row._sum.netFlow ?? 0,
-                },
-                update: {
-                  netFlow: row._sum.netFlow ?? 0,
-                },
-              }),
-            ),
+          const result = await aggregateMonthlyWindow(
+            new Date(start),
+            new Date(end),
           );
-          count += aggregated.length;
+          count += result.upsertCount;
         }
 
         return { upsertCount: count };

@@ -15,7 +15,8 @@
     "db:migrate": "prisma migrate dev",
     "db:gen": "prisma generate",
     "db:studio": "prisma studio",
-    "db:down": "docker compose down"
+    "db:down": "docker compose down",
+    "fast-sync": "tsx scripts/fast-sync.ts"
   },
   "keywords": [],
   "author": "",

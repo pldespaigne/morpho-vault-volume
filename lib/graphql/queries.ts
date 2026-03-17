@@ -1,4 +1,4 @@
-import { graphql } from "@/lib/graphql/generated/gql";
+import { graphql } from "./generated/gql";
 
 export const VAULTS_BY_ADDRESSES = graphql(`
   query VaultsByAddresses($where: VaultFilters, $first: Int) {

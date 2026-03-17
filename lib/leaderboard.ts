@@ -5,7 +5,7 @@ import {
   unstable_cacheTag as cacheTag,
 } from "next/cache";
 
-import { prisma } from "@/lib/prisma";
+import { prisma } from "./prisma";
 
 const LIMIT = 10;
 
