@@ -33,3 +33,6 @@ lib/graphql/generated/
 next-env.d.ts
 
 /generated/prisma
+
+# SQL backups
+backups/
