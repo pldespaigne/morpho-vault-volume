@@ -1,5 +1,3 @@
-"use cache";
-
 import {
   unstable_cacheLife as cacheLife,
   unstable_cacheTag as cacheTag,
@@ -65,6 +63,7 @@ export function getDateRange(
 export async function getLeaderboardData(
   period: Period,
 ): Promise<LeaderboardResponse> {
+  "use cache";
   cacheLife("minutes");
   cacheTag("leaderboard", `leaderboard-${period}`);
 
